@@ -21,14 +21,14 @@ void keyCallback(
   }
 }
 
-// Exo 1
-bool ViewerApplication::loadGltfFile(tinygltf::Model & model) {
+//////////////////////////////// Loading the glTF file ////////////////////////////////////
+bool ViewerApplication::loadGltfFile(tinygltf::Model & model) 
+{
   tinygltf::TinyGLTF loader;
   std::string err;
   std::string warn;
 
   bool ret = loader.LoadASCIIFromFile(&model, &err, &warn, m_gltfFilePath.string());
-  //bool ret = loader.LoadBinaryFromFile(&model, &err, &warn, argv[1]); // for binary glTF(.glb)
 
   if (!warn.empty()) {
     printf("Warn: %s\n", warn.c_str());
@@ -44,6 +44,26 @@ bool ViewerApplication::loadGltfFile(tinygltf::Model & model) {
   }
 
   return ret;
+}
+
+//////////////////////////////// Creation of Buffer Objects ////////////////////////////////////
+std::vector<GLuint> ViewerApplication::createBufferObjects( const tinygltf::Model &model)
+{
+  std::vector<GLuint> bufferObjects(model.buffers.size(), 0); 
+  
+  glGenBuffers(model.buffers.size(), bufferObjects.data());
+  for (size_t i = 0; i < model.buffers.size(); ++i) {
+    glBindBuffer(GL_ARRAY_BUFFER, bufferObjects[i]);
+    glBufferStorage(GL_ARRAY_BUFFER, model.buffers[i].data.size(), model.buffers[i].data.data(), 0);
+  }
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+  return bufferObjects;
+}
+
+
+//////////////////////////////// Creation of Vertex Array Objects ////////////////////////////////////
+std::vector<GLuint> ViewerApplication::createVertexArrayObjects( const tinygltf::Model &model, const std::vector<GLuint> &bufferObjects, std::vector<VaoRange> & meshIndexToVaoRange) {
+  std::vector<GLuint> vertexArrayObjects;
 }
 
 int ViewerApplication::run()
@@ -84,6 +104,7 @@ int ViewerApplication::run()
   loadGltfFile(model);
 
   // TODO Creation of Buffer Objects
+  createBufferObjects(model);
 
   // TODO Creation of Vertex Array Objects
 
