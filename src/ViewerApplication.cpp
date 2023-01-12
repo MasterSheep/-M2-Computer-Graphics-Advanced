@@ -66,24 +66,27 @@ std::vector<GLuint> ViewerApplication::createVertexArrayObjects( const tinygltf:
 {
   std::vector<GLuint> vertexArrayObjects;
 
-  for(int meshIdx = 0; meshIdx < model.meshes.size(); meshIdx++) 
-  {
-    const int  vaoOffset = vertexArrayObjects.size();
-    const auto meshe     = model.meshes[meshIdx];
-    
-    const GLuint VERTEX_ATTRIB_POSITION_IDX = 0;
-    const GLuint VERTEX_ATTRIB_NORMAL_IDX = 1;
-    const GLuint VERTEX_ATTRIB_TEXCOORD0_IDX = 2;
+  const GLuint VERTEX_ATTRIB_POSITION_IDX = 0;
+  const GLuint VERTEX_ATTRIB_NORMAL_IDX = 1;
+  const GLuint VERTEX_ATTRIB_TEXCOORD0_IDX = 2;
 
-    vertexArrayObjects.resize(vaoOffset + meshe.primitives.size());
-    meshIndexToVaoRange.push_back(VaoRange{vaoOffset,(int) meshe.primitives.size()}); // Will be used during rendering
- 
-    glGenVertexArrays(vaoOffset, &vertexArrayObjects[0]);
-    
-    for (auto primitiveIdx = 0; primitiveIdx < meshe.primitives.size(); primitiveIdx++)
+  meshIndexToVaoRange.resize(model.meshes.size());
+
+  for(int meshIdx = 0; meshIdx < model.meshes.size(); meshIdx++) 
+  { 
+    const auto &mesh = model.meshes[meshIdx];
+
+    auto &vaoRange = meshIndexToVaoRange[meshIdx];
+    vaoRange.begin = GLsizei(vertexArrayObjects.size()); 
+    vaoRange.count = GLsizei(mesh.primitives.size()); 
+
+    vertexArrayObjects.resize(vertexArrayObjects.size() + mesh.primitives.size());
+
+    glGenVertexArrays(vaoRange.count, &vertexArrayObjects[vaoRange.begin]);  
+    for (auto primitiveIdx = 0; primitiveIdx < mesh.primitives.size(); primitiveIdx++)
     {
-      const auto vao = vertexArrayObjects[vaoOffset + primitiveIdx];
-      const auto &primitive = meshe.primitives[primitiveIdx];
+      const auto vao = vertexArrayObjects[vaoRange.begin + primitiveIdx];
+      const auto &primitive = mesh.primitives[primitiveIdx];
 
       glBindVertexArray(vao);
 
@@ -169,12 +172,9 @@ int ViewerApplication::run()
       compileProgram({m_ShadersRootPath / m_vertexShader,
           m_ShadersRootPath / m_fragmentShader});
 
-  const auto modelViewProjMatrixLocation =
-      glGetUniformLocation(glslProgram.glId(), "uModelViewProjMatrix");
-  const auto modelViewMatrixLocation =
-      glGetUniformLocation(glslProgram.glId(), "uModelViewMatrix");
-  const auto normalMatrixLocation =
-      glGetUniformLocation(glslProgram.glId(), "uNormalMatrix");
+  const auto modelViewProjMatrixLocation = glGetUniformLocation(glslProgram.glId(), "uModelViewProjMatrix");
+  const auto modelViewMatrixLocation     = glGetUniformLocation(glslProgram.glId(), "uModelViewMatrix");
+  const auto normalMatrixLocation        = glGetUniformLocation(glslProgram.glId(), "uNormalMatrix");
 
   // Build projection matrix
   auto maxDistance = 500.f; // TODO use scene bounds instead to compute this
@@ -183,8 +183,7 @@ int ViewerApplication::run()
       glm::perspective(70.f, float(m_nWindowWidth) / m_nWindowHeight,
           0.001f * maxDistance, 1.5f * maxDistance);
 
-  // TODO Implement a new CameraController model and use it instead. Propose the
-  // choice from the GUI
+  // TODO Implement a new CameraController model and use it instead. Propose the choice from the GUI
   FirstPersonCameraController cameraController{
       m_GLFWHandle.window(), 0.5f * maxDistance};
   if (m_hasUserCamera) {
@@ -196,13 +195,13 @@ int ViewerApplication::run()
   }
 
   tinygltf::Model model;
-  // TODO Loading the glTF file
+  // Loading the glTF file
   loadGltfFile(model);
 
-  // TODO Creation of Buffer Objects
+  // Creation of Buffer Objects
   const auto bufferObjects = createBufferObjects(model);
 
-  // TODO Creation of Vertex Array Objects
+  // Creation of Vertex Array Objects
   std::vector<VaoRange> meshToVertexArrays;
   const auto vertexArrayObjects = createVertexArrayObjects(model, bufferObjects, meshToVertexArrays);
 
@@ -221,18 +220,84 @@ int ViewerApplication::run()
     // We use a std::function because a simple lambda cannot be recursive
     const std::function<void(int, const glm::mat4 &)> drawNode =
         [&](int nodeIdx, const glm::mat4 &parentMatrix) {
-          // TODO The drawNode function
+          // The drawNode function
+          const auto &node = model.nodes[nodeIdx];
+          glm::mat4 modelMatrix = getLocalToWorldMatrix(node, parentMatrix);
+
+          if(node.mesh >= 0)
+          {
+            const auto mvMatrix  = viewMatrix * modelMatrix;
+            const auto mvpMatrix = projMatrix * mvMatrix;
+
+            glUniformMatrix4fv(modelViewProjMatrixLocation, 1, GL_FALSE, glm::value_ptr(mvpMatrix));
+            glUniformMatrix4fv(modelViewMatrixLocation,     1, GL_FALSE, glm::value_ptr(mvMatrix));         
+            glUniformMatrix4fv(normalMatrixLocation,        1, GL_FALSE, glm::value_ptr(glm::transpose(glm::inverse(mvMatrix))));
+            
+            const auto &mesh = model.meshes[node.mesh];
+            const auto &vaoRange = meshToVertexArrays[node.mesh];
+
+
+
+            for (auto primIdx = 0; primIdx < mesh.primitives.size(); primIdx++) {
+              const auto vao = vertexArrayObjects[vaoRange.begin + primIdx];
+              const auto &primitive = mesh.primitives[primIdx];
+
+              glBindVertexArray(vao);
+
+              if (primitive.indices >= 0) 
+              {
+                const auto &accessor   = model.accessors[primitive.indices];
+                const auto &bufferView = model.bufferViews[accessor.bufferView];
+                const auto byteOffset  = accessor.byteOffset + bufferView.byteOffset;
+                
+                glDrawElements(primitive.mode, GLsizei(accessor.count), accessor.componentType, (const GLvoid *) byteOffset);
+              } 
+              
+              else 
+              {
+                const auto accessorIdx = (*begin(primitive.attributes)).second;
+                const auto &accessor = model.accessors[accessorIdx];
+                glDrawArrays(primitive.mode, 0, GLsizei(accessor.count));
+              }
+            }
+          }
+
+          // Draw children
+          for (const auto childNodeIdx : node.children) {
+            drawNode(childNodeIdx, modelMatrix);
+          }
         };
 
     // Draw the scene referenced by gltf file
     if (model.defaultScene >= 0) {
-      // TODO Draw all nodes
+      // Draw all nodes
       for(auto node : model.scenes[model.defaultScene].nodes)
       {
         drawNode(node, glm::mat4(1));
       }
     }
   };
+
+  if(!m_OutputPath.empty())
+  {
+    const auto numComponents = 3;
+
+    std::vector<unsigned char> pixels(m_nWindowWidth * m_nWindowHeight * numComponents);
+
+    renderToImage(m_nWindowWidth, m_nWindowHeight, numComponents, pixels.data(), [&]() {
+      drawScene(cameraController.getCamera());
+    });
+
+    flipImageYAxis(
+        m_nWindowWidth, m_nWindowHeight, numComponents, pixels.data());
+
+    // Write png on disk
+    const auto strPath = m_OutputPath.string();
+    stbi_write_png(
+        strPath.c_str(), m_nWindowWidth, m_nWindowHeight, numComponents, pixels.data(), 0);
+
+    return 0; 
+  }
 
   // Loop until the user closes the window
   for (auto iterationCount = 0u; !m_GLFWHandle.shouldClose();
