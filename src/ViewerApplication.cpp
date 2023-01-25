@@ -640,8 +640,6 @@ int ViewerApplication::run()
       ImGui::End();
     }
 
-    
-
     imguiRenderFrame();
 
     glfwPollEvents(); // Poll for and process events
