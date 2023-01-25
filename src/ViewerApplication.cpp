@@ -95,18 +95,18 @@ std::vector<GLuint> ViewerApplication::createVertexArrayObjects( const tinygltf:
         if (iterator != end(primitive.attributes)) { // If "POSITION" has been found in the map
           // (*iterator).first is the key "POSITION", (*iterator).second is the value, ie. the index of the accessor for this attribute
           const auto accessorIdx = (*iterator).second;
-          const auto &accessor = model.accessors[accessorIdx];              // TODO get the correct tinygltf::Accessor from model.accessors
-          const auto &bufferView = model.bufferViews[accessor.bufferView]; // TODO get the correct tinygltf::BufferView from model.bufferViews. You need to use the accessor
-          const auto bufferIdx = bufferView.buffer;                       // TODO get the index of the buffer used by the bufferView (you need to use it)
-          const auto bufferObject = bufferObjects[bufferIdx];            // TODO get the correct buffer object from the buffer index
+          const auto &accessor = model.accessors[accessorIdx];              // get the correct tinygltf::Accessor from model.accessors
+          const auto &bufferView = model.bufferViews[accessor.bufferView]; // get the correct tinygltf::BufferView from model.bufferViews. You need to use the accessor
+          const auto bufferIdx = bufferView.buffer;                       // get the index of the buffer used by the bufferView (you need to use it)
+          const auto bufferObject = bufferObjects[bufferIdx];            // get the correct buffer object from the buffer index
 
-          // TODO Enable the vertex attrib array corresponding to POSITION with glEnableVertexAttribArray (you need to use VERTEX_ATTRIB_POSITION_IDX which has to be defined at the top of the cpp file)
+          // Enable the vertex attrib array corresponding to POSITION with glEnableVertexAttribArray (you need to use VERTEX_ATTRIB_POSITION_IDX which has to be defined at the top of the cpp file)
           glEnableVertexAttribArray(VERTEX_ATTRIB_POSITION_IDX);
-          // TODO Bind the buffer object to GL_ARRAY_BUFFER
+          // Bind the buffer object to GL_ARRAY_BUFFER
           glBindBuffer(GL_ARRAY_BUFFER, bufferObject);
 
-          const auto byteOffset = accessor.byteOffset + bufferView.byteOffset; // TODO Compute the total byte offset using the accessor and the buffer view
-          // TODO Call glVertexAttribPointer with the correct arguments.
+          const auto byteOffset = accessor.byteOffset + bufferView.byteOffset; // Compute the total byte offset using the accessor and the buffer view
+          // Call glVertexAttribPointer with the correct arguments.
           // Remember size is obtained with accessor.type, type is obtained with accessor.componentType.
           // The stride is obtained in the bufferView, normalized is always GL_FALSE, and pointer is the byteOffset (don't forget the cast).
           glVertexAttribPointer(VERTEX_ATTRIB_POSITION_IDX, accessor.type, accessor.componentType, 
@@ -175,11 +175,20 @@ int ViewerApplication::run()
   const auto modelViewProjMatrixLocation = glGetUniformLocation(glslProgram.glId(), "uModelViewProjMatrix");
   const auto modelViewMatrixLocation     = glGetUniformLocation(glslProgram.glId(), "uModelViewMatrix");
   const auto normalMatrixLocation        = glGetUniformLocation(glslProgram.glId(), "uNormalMatrix");
+
+  const auto lightDirectionLocation      = glGetUniformLocation(glslProgram.glId(), "uLightDirection");
+  const auto lightIntensityLocation      = glGetUniformLocation(glslProgram.glId(), "uLightIntensity");
   
   tinygltf::Model model;
   if (!loadGltfFile(model)) {
     return -1;
   }
+
+  // Set light parameters
+  glm::vec3 lightDirection(1, 1, 1);
+  glm::vec3 lightIntensity(1, 1, 1);
+  bool lightFromCamera = false;
+
   glm::vec3 bboxMin, bboxMax;
   computeSceneBounds(model, bboxMin, bboxMax);
 
@@ -189,7 +198,7 @@ int ViewerApplication::run()
       glm::perspective(70.f, float(m_nWindowWidth) / m_nWindowHeight,
           0.001f * maxDistance, 1.5f * maxDistance);
 
-  // TODO Implement a new CameraController model and use it instead. Propose the choice from the GUI
+  // Implement a new CameraController model and use it instead. Propose the choice from the GUI
   std::unique_ptr<CameraController> cameraController =  std::make_unique<TrackballCameraController>(m_GLFWHandle.window(), 0.5f * maxDistance);
   if (m_hasUserCamera) {
     cameraController->setCamera(m_userCamera);
@@ -220,6 +229,20 @@ int ViewerApplication::run()
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     const auto viewMatrix = camera.getViewMatrix();
+
+    if (lightDirectionLocation >= 0) {
+      if (lightFromCamera) {
+        glUniform3f(lightDirectionLocation, 0, 0, 1);
+      } else {
+        const auto lightDirectionInViewSpace = glm::normalize(glm::vec3(viewMatrix * glm::vec4(lightDirection, 0.)));
+        glUniform3f(lightDirectionLocation, lightDirectionInViewSpace[0], lightDirectionInViewSpace[1], lightDirectionInViewSpace[2]);
+      }
+    }
+
+    if (lightIntensityLocation >= 0) {
+      glUniform3f(lightIntensityLocation, lightIntensity[0], lightIntensity[1], lightIntensity[2]);
+    }
+
 
     // The recursive function that should draw a node
     // We use a std::function because a simple lambda cannot be recursive
@@ -359,6 +382,28 @@ int ViewerApplication::run()
         }
 
       }
+
+      if (ImGui::CollapsingHeader("Light", ImGuiTreeNodeFlags_DefaultOpen)) {
+        static float lightTheta = 0.f;
+        static float lightPhi = 0.f;
+
+        if (ImGui::SliderFloat("theta", &lightTheta, 0, glm::pi<float>()) || ImGui::SliderFloat("phi", &lightPhi, 0, 2.f * glm::pi<float>())) {
+          const auto sinPhi   = glm::sin(lightPhi);
+          const auto cosPhi   = glm::cos(lightPhi);
+          const auto sinTheta = glm::sin(lightTheta);
+          const auto cosTheta = glm::cos(lightTheta);
+          lightDirection      = glm::vec3(sinTheta * cosPhi, cosTheta, sinTheta * sinPhi);
+        }
+
+        static glm::vec3 lightColor(1.f, 1.f, 1.f);
+        static float lightIntensityFactor = 1.f;
+
+        if (ImGui::ColorEdit3("color", (float *) &lightColor) || ImGui::InputFloat("intensity", &lightIntensityFactor)) {
+          lightIntensity = lightColor * lightIntensityFactor;
+        }
+        ImGui::Checkbox("light from camera", &lightFromCamera);
+      }
+
       ImGui::End();
     }
 
