@@ -35,8 +35,7 @@ glm::mat4 getLocalToWorldMatrix(
                                                  node.scale[1], node.scale[2]));
 };
 
-void computeSceneBounds(
-    const tinygltf::Model &model, glm::vec3 &bboxMin, glm::vec3 &bboxMax)
+void computeSceneBounds(const tinygltf::Model &model, glm::vec3 &bboxMin, glm::vec3 &bboxMax)
 {
   // Compute scene bounding box
   // todo refactor with scene drawing
@@ -47,42 +46,37 @@ void computeSceneBounds(
     const std::function<void(int, const glm::mat4 &)> updateBounds =
         [&](int nodeIdx, const glm::mat4 &parentMatrix) {
           const auto &node = model.nodes[nodeIdx];
-          const glm::mat4 modelMatrix =
-              getLocalToWorldMatrix(node, parentMatrix);
+          const glm::mat4 modelMatrix = getLocalToWorldMatrix(node, parentMatrix);
+          
           if (node.mesh >= 0) {
             const auto &mesh = model.meshes[node.mesh];
             for (size_t pIdx = 0; pIdx < mesh.primitives.size(); ++pIdx) {
-              const auto &primitive = mesh.primitives[pIdx];
-              const auto positionAttrIdxIt =
-                  primitive.attributes.find("POSITION");
+              const auto &primitive        = mesh.primitives[pIdx];
+              const auto positionAttrIdxIt = primitive.attributes.find("POSITION");
+
               if (positionAttrIdxIt == end(primitive.attributes)) {
                 continue;
               }
-              const auto &positionAccessor =
-                  model.accessors[(*positionAttrIdxIt).second];
+
+              const auto &positionAccessor = model.accessors[(*positionAttrIdxIt).second];
+
               if (positionAccessor.type != 3) {
                 std::cerr << "Position accessor with type != VEC3, skipping"
                           << std::endl;
                 continue;
               }
-              const auto &positionBufferView =
-                  model.bufferViews[positionAccessor.bufferView];
-              const auto byteOffset =
-                  positionAccessor.byteOffset + positionBufferView.byteOffset;
-              const auto &positionBuffer =
-                  model.buffers[positionBufferView.buffer];
-              const auto positionByteStride =
-                  positionBufferView.byteStride ? positionBufferView.byteStride
-                                                : 3 * sizeof(float);
+
+              const auto &positionBufferView = model.bufferViews[positionAccessor.bufferView];
+              const auto byteOffset          = positionAccessor.byteOffset + positionBufferView.byteOffset;
+              const auto &positionBuffer     = model.buffers[positionBufferView.buffer];
+              const auto positionByteStride  = positionBufferView.byteStride ? positionBufferView.byteStride : 3 * sizeof(float);
 
               if (primitive.indices >= 0) {
-                const auto &indexAccessor = model.accessors[primitive.indices];
-                const auto &indexBufferView =
-                    model.bufferViews[indexAccessor.bufferView];
-                const auto indexByteOffset =
-                    indexAccessor.byteOffset + indexBufferView.byteOffset;
-                const auto &indexBuffer = model.buffers[indexBufferView.buffer];
-                auto indexByteStride = indexBufferView.byteStride;
+                const auto &indexAccessor   = model.accessors[primitive.indices];
+                const auto &indexBufferView = model.bufferViews[indexAccessor.bufferView];
+                const auto indexByteOffset  = indexAccessor.byteOffset + indexBufferView.byteOffset;
+                const auto &indexBuffer     = model.buffers[indexBufferView.buffer];
+                auto indexByteStride        = indexBufferView.byteStride;
 
                 switch (indexAccessor.componentType) {
                 default:
@@ -92,50 +86,38 @@ void computeSceneBounds(
                       << std::endl;
                   continue;
                 case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
-                  indexByteStride =
-                      indexByteStride ? indexByteStride : sizeof(uint8_t);
+                  indexByteStride = indexByteStride ? indexByteStride : sizeof(uint8_t);
                   break;
                 case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
-                  indexByteStride =
-                      indexByteStride ? indexByteStride : sizeof(uint16_t);
+                  indexByteStride = indexByteStride ? indexByteStride : sizeof(uint16_t);
                   break;
                 case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
-                  indexByteStride =
-                      indexByteStride ? indexByteStride : sizeof(uint32_t);
+                  indexByteStride = indexByteStride ? indexByteStride : sizeof(uint32_t);
                   break;
                 }
 
                 for (size_t i = 0; i < indexAccessor.count; ++i) {
                   uint32_t index = 0;
                   switch (indexAccessor.componentType) {
-                  case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
-                    index = *((const uint8_t *)&indexBuffer
-                                  .data[indexByteOffset + indexByteStride * i]);
-                    break;
-                  case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
-                    index = *((const uint16_t *)&indexBuffer
-                                  .data[indexByteOffset + indexByteStride * i]);
-                    break;
-                  case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
-                    index = *((const uint32_t *)&indexBuffer
-                                  .data[indexByteOffset + indexByteStride * i]);
-                    break;
+                    case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
+                      index = *((const uint8_t  *) &indexBuffer.data[indexByteOffset + indexByteStride * i]);
+                      break;
+                    case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
+                      index = *((const uint16_t *) &indexBuffer.data[indexByteOffset + indexByteStride * i]);
+                      break;
+                    case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
+                      index = *((const uint32_t *) &indexBuffer.data[indexByteOffset + indexByteStride * i]);
+                      break;
                   }
-                  const auto &localPosition =
-                      *((const glm::vec3 *)&positionBuffer
-                              .data[byteOffset + positionByteStride * index]);
-                  const auto worldPosition =
-                      glm::vec3(modelMatrix * glm::vec4(localPosition, 1.f));
+                  const auto &localPosition = *((const glm::vec3 *) &positionBuffer.data[byteOffset + positionByteStride * index]);
+                  const auto worldPosition  = glm::vec3(modelMatrix * glm::vec4(localPosition, 1.f));
                   bboxMin = glm::min(bboxMin, worldPosition);
                   bboxMax = glm::max(bboxMax, worldPosition);
                 }
               } else {
                 for (size_t i = 0; i < positionAccessor.count; ++i) {
-                  const auto &localPosition =
-                      *((const glm::vec3 *)&positionBuffer
-                              .data[byteOffset + positionByteStride * i]);
-                  const auto worldPosition =
-                      glm::vec3(modelMatrix * glm::vec4(localPosition, 1.f));
+                  const auto &localPosition = *((const glm::vec3 *) &positionBuffer.data[byteOffset + positionByteStride * i]);
+                  const auto worldPosition  = glm::vec3(modelMatrix * glm::vec4(localPosition, 1.f));
                   bboxMin = glm::min(bboxMin, worldPosition);
                   bboxMax = glm::max(bboxMax, worldPosition);
                 }

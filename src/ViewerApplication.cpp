@@ -66,10 +66,12 @@ std::vector<GLuint> ViewerApplication::createVertexArrayObjects( const tinygltf:
 {
   std::vector<GLuint> vertexArrayObjects;
 
-  const GLuint VERTEX_ATTRIB_POSITION_IDX = 0;
-  const GLuint VERTEX_ATTRIB_NORMAL_IDX = 1;
+  const GLuint VERTEX_ATTRIB_POSITION_IDX  = 0;
+  const GLuint VERTEX_ATTRIB_NORMAL_IDX    = 1;
   const GLuint VERTEX_ATTRIB_TEXCOORD0_IDX = 2;
-
+  const GLuint VERTEX_ATTRIB_TANGENT_IDX   = 3; 
+  const GLuint VERTEX_ATTRIB_BITANGENT_IDX = 4; 
+  
   meshIndexToVaoRange.resize(model.meshes.size());
 
   for(int meshIdx = 0; meshIdx < model.meshes.size(); meshIdx++) 
@@ -165,6 +167,144 @@ std::vector<GLuint> ViewerApplication::createVertexArrayObjects( const tinygltf:
   return vertexArrayObjects;
 }
 
+void createTangentBitangent(const glm::vec3 * position, const glm::vec2 * texture, glm::vec3 &tangent, glm::vec3 &bitangent)
+{
+  glm::vec3 edge1 = position[1] - position[0];
+  glm::vec3 edge2 = position[2] - position[0];
+  glm::vec2 deltaUV1 = texture[1] - texture[0];
+  glm::vec2 deltaUV2 = texture[2] - texture[0];  
+
+  float f = 1.0f / (deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y);
+
+  tangent.x = f * (deltaUV2.y * edge1.x - deltaUV1.y * edge2.x);
+  tangent.y = f * (deltaUV2.y * edge1.y - deltaUV1.y * edge2.y);
+  tangent.z = f * (deltaUV2.y * edge1.z - deltaUV1.y * edge2.z);
+
+  bitangent.x = f * (-deltaUV2.x * edge1.x + deltaUV1.x * edge2.x);
+  bitangent.y = f * (-deltaUV2.x * edge1.y + deltaUV1.x * edge2.y);
+  bitangent.z = f * (-deltaUV2.x * edge1.z + deltaUV1.x * edge2.z);
+}
+
+void createTangentBitangentArrays(const tinygltf::Model &model, std::vector<glm::vec3> *tangents, std::vector<glm::vec3> *bitangents)
+{
+
+  if (model.defaultScene >= 0) {
+    const std::function<void(int, const glm::mat4 &)> updateBounds =
+        [&](int nodeIdx, const glm::mat4 &parentMatrix) {
+          const auto &node = model.nodes[nodeIdx];
+          const glm::mat4 modelMatrix = getLocalToWorldMatrix(node, parentMatrix);
+
+          glm::vec3 localPositions[3];
+          glm::vec2 localTextures[3];
+          glm::vec3 tangent;
+          glm::vec3 bitangent;
+
+          if (node.mesh >= 0) {
+            const auto &mesh = model.meshes[node.mesh];
+
+            for (size_t pIdx = 0; pIdx < mesh.primitives.size(); ++pIdx) {
+              const auto &primitive        = mesh.primitives[pIdx];             
+              const auto positionAttrIdxIt = primitive.attributes.find("POSITION");
+              const auto textureAttrIdxIt  = primitive.attributes.find("TEXCOORD_0");
+
+              if (positionAttrIdxIt == end(primitive.attributes) || textureAttrIdxIt == end(primitive.attributes)) {
+                continue;
+              }
+
+              // Accessors
+              const auto &positionAccessor = model.accessors[(*positionAttrIdxIt).second];
+              const auto &textureAccessor  = model.accessors[(*textureAttrIdxIt).second];
+
+              if (positionAccessor.type != 3) {
+                std::cerr << "Position accessor with type != VEC3, skipping" << std::endl;
+                continue;
+              } if (textureAccessor.type != 2) {
+                std::cerr << "Texture accessor with type != VEC2, skipping" << std::endl;
+                continue;
+              }
+
+              // Position informations
+              const auto &positionBufferView = model.bufferViews[positionAccessor.bufferView];
+              const auto positionByteOffset  = positionAccessor.byteOffset + positionBufferView.byteOffset;
+              const auto &positionBuffer     = model.buffers[positionBufferView.buffer];
+              const auto positionByteStride  = positionBufferView.byteStride ? positionBufferView.byteStride : 3 * sizeof(float);
+              // Texture informations
+              const auto &textureBufferView = model.bufferViews[textureAccessor.bufferView];
+              const auto textureByteOffset  = textureAccessor.byteOffset + textureBufferView.byteOffset;
+              const auto &textureBuffer     = model.buffers[textureBufferView.buffer];
+              const auto textureByteStride  = textureBufferView.byteStride ? textureBufferView.byteStride : 2 * sizeof(float);
+
+              if (primitive.indices >= 0) {
+                const auto &indexAccessor   = model.accessors[primitive.indices];
+                const auto &indexBufferView = model.bufferViews[indexAccessor.bufferView];
+                const auto indexByteOffset  = indexAccessor.byteOffset + indexBufferView.byteOffset;
+                const auto &indexBuffer     = model.buffers[indexBufferView.buffer];
+                auto indexByteStride        = indexBufferView.byteStride;
+
+                switch (indexAccessor.componentType) {
+                  default:
+                    std::cerr << "Primitive index accessor with bad componentType " << indexAccessor.componentType << ", skipping it." << std::endl;
+                    continue;
+                  case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
+                    indexByteStride = indexByteStride ? indexByteStride : sizeof(uint8_t);
+                    break;
+                  case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
+                    indexByteStride = indexByteStride ? indexByteStride : sizeof(uint16_t);
+                    break;
+                  case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
+                    indexByteStride = indexByteStride ? indexByteStride : sizeof(uint32_t);
+                    break;
+                }
+
+                uint32_t index[3];
+
+                for (size_t i = 0; i < indexAccessor.count; i += 3) {        
+                  for (size_t j = 0; j < 3; j++) {
+                    switch (indexAccessor.componentType) {
+                      case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
+                        index[j] = *((const uint8_t  *) &indexBuffer.data[indexByteOffset + indexByteStride * (i + j)]);
+                        break;
+                      case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
+                        index[j] = *((const uint16_t *) &indexBuffer.data[indexByteOffset + indexByteStride * (i + j)]);
+                        break;
+                      case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
+                        index[j] = *((const uint32_t *) &indexBuffer.data[indexByteOffset + indexByteStride * (i + j)]);
+                        break;
+                    }
+                    localPositions[j] = *((const glm::vec3 *) &positionBuffer.data[positionByteOffset + positionByteStride * index[j]]);
+                    localTextures[j] = *((const glm::vec2 *) &textureBuffer.data[textureByteOffset + textureByteStride * index[j]]);
+                  }
+                  createTangentBitangent(localPositions, localTextures, tangent, bitangent);
+                  tangents->emplace_back(tangent);
+                  bitangents->emplace_back(bitangent);
+                }
+              } else {
+                for (size_t i = 0; i < positionAccessor.count; i += 3) {
+                  for (size_t j = 0; j < 3; j++) {
+                    localPositions[j] = *((const glm::vec3 *) &positionBuffer.data[positionByteOffset + positionByteStride * (i + j)]);
+                    localTextures[j] = *((const glm::vec2 *) &textureBuffer.data[textureByteOffset + textureByteStride * (i + j)]);
+                  }
+                  createTangentBitangent(localPositions, localTextures, tangent, bitangent);
+                  tangents->emplace_back(tangent);
+                  bitangents->emplace_back(bitangent);
+                }
+              }
+            }
+          }
+          
+          for (const auto childNodeIdx : node.children) {
+            updateBounds(childNodeIdx, modelMatrix);
+          }
+          
+        };
+
+    
+    for (const auto nodeIdx : model.scenes[model.defaultScene].nodes) {
+      updateBounds(nodeIdx, glm::mat4(1));
+    }
+  }
+}
+
 std::vector<GLuint> ViewerApplication::createTextureObjects(const tinygltf::Model &model) const 
 {
   std::vector<GLuint> textureObjects(model.textures.size(), 0);
@@ -206,9 +346,7 @@ std::vector<GLuint> ViewerApplication::createTextureObjects(const tinygltf::Mode
 int ViewerApplication::run()
 {
   // Loader shaders
-  const auto glslProgram =
-      compileProgram({m_ShadersRootPath / m_vertexShader,
-          m_ShadersRootPath / m_fragmentShader});
+  const auto glslProgram = compileProgram({m_ShadersRootPath / m_vertexShader, m_ShadersRootPath / m_fragmentShader});
 
   const auto modelViewProjMatrixLocation       = glGetUniformLocation(glslProgram.glId(), "uModelViewProjMatrix");
   const auto modelViewMatrixLocation           = glGetUniformLocation(glslProgram.glId(), "uModelViewMatrix");
@@ -265,9 +403,7 @@ int ViewerApplication::run()
   
   const auto diag = bboxMax - bboxMin;
   auto maxDistance = glm::length(diag);
-  const auto projMatrix =
-      glm::perspective(70.f, float(m_nWindowWidth) / m_nWindowHeight,
-          0.001f * maxDistance, 1.5f * maxDistance);
+  const auto projMatrix = glm::perspective(70.f, float(m_nWindowWidth) / m_nWindowHeight, 0.001f * maxDistance, 1.5f * maxDistance);
 
   // Implement a new CameraController model and use it instead. Propose the choice from the GUI
   std::unique_ptr<CameraController> cameraController =  std::make_unique<TrackballCameraController>(m_GLFWHandle.window(), 0.5f * maxDistance);
@@ -285,6 +421,13 @@ int ViewerApplication::run()
 
   // Creation of Buffer Objects
   const auto bufferObjects = createBufferObjects(model);
+
+  //
+  std::vector<glm::vec3> tangents; 
+  std::vector<glm::vec3> bitangents;
+  createTangentBitangentArrays(model, &tangents, &bitangents);
+  std::cout << tangents.size() << std::endl; 
+  std::cout << bitangents.size() << std::endl; 
 
   // Creation of Vertex Array Objects
   std::vector<VaoRange> meshToVertexArrays;
@@ -572,8 +715,7 @@ int ViewerApplication::run()
 
     {
       ImGui::Begin("GUI");
-      ImGui::Text("Application average %.3f ms/frame (%.1f FPS)",
-          1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
+      ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
       if (ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Text("eye: %.3f %.3f %.3f", camera.eye().x, camera.eye().y,
             camera.eye().z);
