@@ -62,7 +62,7 @@ std::vector<GLuint> ViewerApplication::createBufferObjects( const tinygltf::Mode
 
 
 //////////////////////////////// Creation of Vertex Array Objects ////////////////////////////////////
-std::vector<GLuint> ViewerApplication::createVertexArrayObjects( const tinygltf::Model &model, const std::vector<GLuint> &bufferObjects, std::vector<VaoRange> & meshIndexToVaoRange) 
+std::vector<GLuint> ViewerApplication::createVertexArrayObjects( const tinygltf::Model &model, const std::vector<GLuint> &bufferObjects, const GLuint bufferTangentObject, std::vector<VaoRange> & meshIndexToVaoRange) 
 {
   std::vector<GLuint> vertexArrayObjects;
 
@@ -107,10 +107,7 @@ std::vector<GLuint> ViewerApplication::createVertexArrayObjects( const tinygltf:
           // Bind the buffer object to GL_ARRAY_BUFFER
           glBindBuffer(GL_ARRAY_BUFFER, bufferObject);
 
-          const auto byteOffset = accessor.byteOffset + bufferView.byteOffset; // Compute the total byte offset using the accessor and the buffer view
-          // Call glVertexAttribPointer with the correct arguments.
-          // Remember size is obtained with accessor.type, type is obtained with accessor.componentType.
-          // The stride is obtained in the bufferView, normalized is always GL_FALSE, and pointer is the byteOffset (don't forget the cast).
+          const auto byteOffset = accessor.byteOffset + bufferView.byteOffset; // Compute the total byte offset using t0n't forget the cast).
           glVertexAttribPointer(VERTEX_ATTRIB_POSITION_IDX, accessor.type, accessor.componentType, 
                                 GL_FALSE, GLsizei(bufferView.byteStride), (const GLvoid *)byteOffset);
         };
@@ -151,6 +148,18 @@ std::vector<GLuint> ViewerApplication::createVertexArrayObjects( const tinygltf:
                                 GL_FALSE, GLsizei(bufferView.byteStride), (const GLvoid *)byteOffset);
         };
       }
+      
+      // TANGENTS 
+      glEnableVertexAttribArray(VERTEX_ATTRIB_TANGENT_IDX);
+      glBindBuffer(GL_ARRAY_BUFFER, bufferTangentObject);
+      glVertexAttribPointer(VERTEX_ATTRIB_TANGENT_IDX, 3, GL_FLOAT, GL_FALSE, 0, (const GLvoid *)0);
+      
+      // BITANGENTS
+      /*
+      glEnableVertexAttribArray(VERTEX_ATTRIB_BITANGENT_IDX);
+      glBindBuffer(GL_ARRAY_BUFFER, bufferBitangentObject);
+      glVertexAttribPointer(VERTEX_ATTRIB_BITANGENT_IDX, 3, GL_FLOAT, GL_FALSE, 0, (const GLvoid *)0);
+      */
 
       if (primitive.indices >= 0) {
         const auto accessorIdx = primitive.indices;
@@ -167,8 +176,10 @@ std::vector<GLuint> ViewerApplication::createVertexArrayObjects( const tinygltf:
   return vertexArrayObjects;
 }
 
-void createTangentBitangent(const glm::vec3 * position, const glm::vec2 * texture, glm::vec3 &tangent, glm::vec3 &bitangent)
-{
+glm::vec3 ViewerApplication::createTangentBitangent(const glm::vec3 * position, const glm::vec2 * texture)
+{ 
+  glm::vec3 tangent;
+
   glm::vec3 edge1 = position[1] - position[0];
   glm::vec3 edge2 = position[2] - position[0];
   glm::vec2 deltaUV1 = texture[1] - texture[0];
@@ -180,13 +191,29 @@ void createTangentBitangent(const glm::vec3 * position, const glm::vec2 * textur
   tangent.y = f * (deltaUV2.y * edge1.y - deltaUV1.y * edge2.y);
   tangent.z = f * (deltaUV2.y * edge1.z - deltaUV1.y * edge2.z);
 
+  return tangent;
+/*
   bitangent.x = f * (-deltaUV2.x * edge1.x + deltaUV1.x * edge2.x);
   bitangent.y = f * (-deltaUV2.x * edge1.y + deltaUV1.x * edge2.y);
   bitangent.z = f * (-deltaUV2.x * edge1.z + deltaUV1.x * edge2.z);
+  */
 }
 
-void createTangentBitangentArrays(const tinygltf::Model &model, std::vector<glm::vec3> *tangents, std::vector<glm::vec3> *bitangents)
+//////////////////////////////// Creation of Tangent Buffer Objects ////////////////////////////////////
+GLuint createBufferFromArrayObjects(glm::vec3 * array, int arraySize)
 {
+  GLuint bufferObject; 
+  glGenBuffers((GLsizei) 1, &bufferObject);
+  glBindBuffer(GL_ARRAY_BUFFER, bufferObject);
+  glBufferStorage(GL_ARRAY_BUFFER, arraySize * sizeof(glm::vec3), array, GL_STATIC_DRAW);
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+  return bufferObject;
+}
+
+GLuint ViewerApplication::createTangentBitangentArrays(const tinygltf::Model &model)
+{
+  glm::vec3 * tangents = nullptr;
+  int tangentNumber;
 
   if (model.defaultScene >= 0) {
     const std::function<void(int, const glm::mat4 &)> updateBounds =
@@ -197,10 +224,15 @@ void createTangentBitangentArrays(const tinygltf::Model &model, std::vector<glm:
           glm::vec3 localPositions[3];
           glm::vec2 localTextures[3];
           glm::vec3 tangent;
-          glm::vec3 bitangent;
+          //glm::vec3 bitangent;
 
           if (node.mesh >= 0) {
             const auto &mesh = model.meshes[node.mesh];
+            
+            // TODO, Passer les tableau en tableau de tableau au cas ou mesh.primites est sup a 1
+            //tangents = (glm::vec3*) malloc(model.buffers[0].data.size() * sizeof(glm::vec3));
+            //bitangents = (glm::vec3*) malloc(model.buffers[0].data.size() * sizeof(glm::vec3));
+            //tangents.resize(model.buffers[0].data.size());
 
             for (size_t pIdx = 0; pIdx < mesh.primitives.size(); ++pIdx) {
               const auto &primitive        = mesh.primitives[pIdx];             
@@ -234,6 +266,10 @@ void createTangentBitangentArrays(const tinygltf::Model &model, std::vector<glm:
               const auto &textureBuffer     = model.buffers[textureBufferView.buffer];
               const auto textureByteStride  = textureBufferView.byteStride ? textureBufferView.byteStride : 2 * sizeof(float);
 
+              if(tangents == nullptr) {
+                tangents = new glm::vec3[positionBuffer.data.size()];
+              }
+
               if (primitive.indices >= 0) {
                 const auto &indexAccessor   = model.accessors[primitive.indices];
                 const auto &indexBufferView = model.bufferViews[indexAccessor.bufferView];
@@ -257,9 +293,10 @@ void createTangentBitangentArrays(const tinygltf::Model &model, std::vector<glm:
                 }
 
                 uint32_t index[3];
+                size_t i, j;
 
-                for (size_t i = 0; i < indexAccessor.count; i += 3) {        
-                  for (size_t j = 0; j < 3; j++) {
+                for (i = 0; i < indexAccessor.count; i += 3) {        
+                  for (j = 0; j < 3; j++) {
                     switch (indexAccessor.componentType) {
                       case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
                         index[j] = *((const uint8_t  *) &indexBuffer.data[indexByteOffset + indexByteStride * (i + j)]);
@@ -274,19 +311,30 @@ void createTangentBitangentArrays(const tinygltf::Model &model, std::vector<glm:
                     localPositions[j] = *((const glm::vec3 *) &positionBuffer.data[positionByteOffset + positionByteStride * index[j]]);
                     localTextures[j] = *((const glm::vec2 *) &textureBuffer.data[textureByteOffset + textureByteStride * index[j]]);
                   }
-                  createTangentBitangent(localPositions, localTextures, tangent, bitangent);
-                  tangents->emplace_back(tangent);
-                  bitangents->emplace_back(bitangent);
+
+                  tangent = createTangentBitangent(localPositions, localTextures);
+
+                  ///////////////
+                  for (j = 0; j < 3; j++) {
+                    tangentNumber++;
+                    tangents[positionByteOffset + positionByteStride * index[j]] = tangent;
+                  }
                 }
               } else {
+                size_t i, j;
                 for (size_t i = 0; i < positionAccessor.count; i += 3) {
                   for (size_t j = 0; j < 3; j++) {
                     localPositions[j] = *((const glm::vec3 *) &positionBuffer.data[positionByteOffset + positionByteStride * (i + j)]);
                     localTextures[j] = *((const glm::vec2 *) &textureBuffer.data[textureByteOffset + textureByteStride * (i + j)]);
                   }
-                  createTangentBitangent(localPositions, localTextures, tangent, bitangent);
-                  tangents->emplace_back(tangent);
-                  bitangents->emplace_back(bitangent);
+
+                  tangent = createTangentBitangent(localPositions, localTextures);
+
+                  ///////////////
+                  for (j = 0; j < 3; j++) {
+                    tangents[positionByteOffset + positionByteStride * (i + j)] = tangent;
+                    tangentNumber++;
+                  }
                 }
               }
             }
@@ -303,7 +351,10 @@ void createTangentBitangentArrays(const tinygltf::Model &model, std::vector<glm:
       updateBounds(nodeIdx, glm::mat4(1));
     }
   }
+
+  return createBufferFromArrayObjects(tangents, tangentNumber);
 }
+
 
 std::vector<GLuint> ViewerApplication::createTextureObjects(const tinygltf::Model &model) const 
 {
@@ -351,6 +402,7 @@ int ViewerApplication::run()
   const auto modelViewProjMatrixLocation       = glGetUniformLocation(glslProgram.glId(), "uModelViewProjMatrix");
   const auto modelViewMatrixLocation           = glGetUniformLocation(glslProgram.glId(), "uModelViewMatrix");
   const auto normalMatrixLocation              = glGetUniformLocation(glslProgram.glId(), "uNormalMatrix");
+  const auto modelMatrixLocation               = glGetUniformLocation(glslProgram.glId(), "uModelMatrix");
 
   const auto lightDirectionLocation            = glGetUniformLocation(glslProgram.glId(), "uLightDirection");
   const auto lightIntensityLocation            = glGetUniformLocation(glslProgram.glId(), "uLightIntensity");
@@ -368,7 +420,9 @@ int ViewerApplication::run()
   const auto occlusionTextureLocation          = glGetUniformLocation(glslProgram.glId(), "uOcclusionTexture");
   const auto occlusionStrengthLocation         = glGetUniformLocation(glslProgram.glId(), "uOcclusionStrength");
   const auto applyOcclusionLocation            = glGetUniformLocation(glslProgram.glId(), "uApplyOcclusion");
-
+  const auto normalMapLocation                 = glGetUniformLocation(glslProgram.glId(), "uNormalMap");
+  
+  const auto viewNormalMapLocation             = glGetUniformLocation(glslProgram.glId(), "uViewNormalMap");
   
   tinygltf::Model model;
   if (!loadGltfFile(model)) {
@@ -380,6 +434,7 @@ int ViewerApplication::run()
   glm::vec3 lightIntensity(1, 1, 1);
   bool lightFromCamera = false;
   bool applyOcclusion = true;
+  bool viewNormalMap = false;
 
   // Creation of Texture Objects
   const auto textureObjects = createTextureObjects(model);
@@ -422,16 +477,12 @@ int ViewerApplication::run()
   // Creation of Buffer Objects
   const auto bufferObjects = createBufferObjects(model);
 
-  //
-  std::vector<glm::vec3> tangents; 
-  std::vector<glm::vec3> bitangents;
-  createTangentBitangentArrays(model, &tangents, &bitangents);
-  std::cout << tangents.size() << std::endl; 
-  std::cout << bitangents.size() << std::endl; 
+  // Creation of two Vertex Array of tangent and bitangent 
+  const auto bufferTangentsObject = createTangentBitangentArrays(model); 
 
   // Creation of Vertex Array Objects
   std::vector<VaoRange> meshToVertexArrays;
-  const auto vertexArrayObjects = createVertexArrayObjects(model, bufferObjects, meshToVertexArrays);
+  const auto vertexArrayObjects = createVertexArrayObjects(model, bufferObjects, bufferTangentsObject, meshToVertexArrays);
 
   // Setup OpenGL state for rendering
   glEnable(GL_DEPTH_TEST);
@@ -530,6 +581,20 @@ int ViewerApplication::run()
         glUniform1i(occlusionTextureLocation, 3);
       }
 
+      //// Normal Map ////
+      if(normalMapLocation >= 0) {
+        auto textureObject = 0u;
+        if (material.normalTexture.index >= 0) {
+          const auto &texture = model.textures[material.normalTexture.index];
+          if (texture.source >= 0) {
+            textureObject = textureObjects[texture.source];
+          }
+        }
+        glActiveTexture(GL_TEXTURE4);
+        glBindTexture(GL_TEXTURE_2D, textureObject);
+        glUniform1i(normalMapLocation, 4);
+      }
+
     } else {
       // Apply default material
       // Defined here:
@@ -588,6 +653,18 @@ int ViewerApplication::run()
         glBindTexture(GL_TEXTURE_2D, 0);
         glUniform1i(occlusionTextureLocation, 3);
       }
+
+      //// Normal Map ////
+      if(normalMapLocation >= 0) {
+        glActiveTexture(GL_TEXTURE4);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glUniform1i(occlusionTextureLocation, 4);
+      }
+    }
+
+    //// Bool ////
+    if(viewNormalMapLocation >= 0) {
+      glUniform1i(viewNormalMapLocation, viewNormalMap);
     }
   };
 
@@ -633,6 +710,8 @@ int ViewerApplication::run()
             glUniformMatrix4fv(modelViewProjMatrixLocation, 1, GL_FALSE, glm::value_ptr(mvpMatrix));
             glUniformMatrix4fv(modelViewMatrixLocation,     1, GL_FALSE, glm::value_ptr(mvMatrix));         
             glUniformMatrix4fv(normalMatrixLocation,        1, GL_FALSE, glm::value_ptr(glm::transpose(glm::inverse(mvMatrix))));
+            glUniformMatrix4fv(modelMatrixLocation,         1, GL_FALSE, glm::value_ptr(modelMatrix)); 
+            
             
             const auto &mesh = model.meshes[node.mesh];
             const auto &vaoRange = meshToVertexArrays[node.mesh];
@@ -777,6 +856,7 @@ int ViewerApplication::run()
         }
         ImGui::Checkbox("light from camera", &lightFromCamera);
         ImGui::Checkbox("apply occlusion", &applyOcclusion);
+        ImGui::Checkbox("view normal map", &viewNormalMap);
       }
 
       ImGui::End();

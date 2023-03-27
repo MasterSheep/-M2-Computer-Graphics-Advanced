@@ -8,6 +8,7 @@
 in vec3 vViewSpacePosition;
 in vec3 vViewSpaceNormal;
 in vec2 vTexCoords;
+in mat3 vTBN; ////
 
 // Here we use vTexCoords but we should use vTexCoords1 or vTexCoords2 depending
 // on the material because glTF can handle two texture coordinates sets per
@@ -28,6 +29,9 @@ uniform sampler2D uBaseColorTexture;
 uniform sampler2D uMetallicRoughnessTexture;
 uniform sampler2D uEmissiveTexture;
 uniform sampler2D uOcclusionTexture;
+uniform sampler2D uNormalMap; ////
+
+uniform int uViewNormalMap; ////
 
 uniform int uApplyOcclusion;
 
@@ -63,67 +67,83 @@ vec4 SRGBtoLINEAR(vec4 srgbIn)
 
 void main()
 {
-  vec3 N = normalize(vViewSpaceNormal);
-  vec3 V = normalize(-vViewSpacePosition);
-  vec3 L = uLightDirection;
-  vec3 H = normalize(L + V);
-
-  vec4 baseColorFromTexture =
-      SRGBtoLINEAR(texture(uBaseColorTexture, vTexCoords));
-  vec4 metallicRougnessFromTexture =
-      texture(uMetallicRoughnessTexture, vTexCoords);
-
-  vec4 baseColor = uBaseColorFactor * baseColorFromTexture;
-  vec3 metallic = vec3(uMetallicFactor * metallicRougnessFromTexture.b);
-  float roughness = uRoughnessFactor * metallicRougnessFromTexture.g;
-
-  // https://github.com/KhronosGroup/glTF/blob/master/specification/2.0/README.md#pbrmetallicroughnessmetallicroughnesstexture
-  // "The metallic-roughness texture.The metalness values are sampled from the B
-  // channel.The roughness values are sampled from the G channel."
-
-  vec3 dielectricSpecular = vec3(0.04);
-  vec3 black = vec3(0.);
-
-  vec3 c_diff =
-      mix(baseColor.rgb * (1 - dielectricSpecular.r), black, metallic);
-  vec3 F_0 = mix(vec3(dielectricSpecular), baseColor.rgb, metallic);
-  float alpha = roughness * roughness;
-
-  float VdotH = clamp(dot(V, H), 0., 1.);
-  float baseShlickFactor = 1 - VdotH;
-  float shlickFactor = baseShlickFactor * baseShlickFactor; // power 2
-  shlickFactor *= shlickFactor;                             // power 4
-  shlickFactor *= baseShlickFactor;                         // power 5
-  vec3 F = F_0 + (vec3(1) - F_0) * shlickFactor;
-
-  float sqrAlpha = alpha * alpha;
-
-  float NdotL = clamp(dot(N, L), 0., 1.);
-  float NdotV = clamp(dot(N, V), 0., 1.);
-
-  float visDenominator =
-      NdotL * sqrt(NdotV * NdotV * (1 - sqrAlpha) + sqrAlpha) +
-      NdotV * sqrt(NdotL * NdotL * (1 - sqrAlpha) + sqrAlpha);
-  float Vis = visDenominator > 0. ? 0.5 / visDenominator : 0.0;
-
-  float NdotH = clamp(dot(N, H), 0., 1.);
-  float baseDenomD = (NdotH * NdotH * (sqrAlpha - 1.) + 1.);
-  float D = M_1_PI * sqrAlpha / (baseDenomD * baseDenomD);
-
-  vec3 f_specular = F * Vis * D;
-
-  vec3 diffuse = c_diff * M_1_PI;
-  vec3 f_diffuse = (1. - F) * diffuse;
-  vec3 emissive = SRGBtoLINEAR(texture2D(uEmissiveTexture, vTexCoords)).rgb *
-                  uEmissiveFactor;
-
-  vec3 color = (f_diffuse + f_specular) * uLightIntensity * NdotL;
-  color += emissive;
-
-  if (1 == uApplyOcclusion) {
-    float ao = texture2D(uOcclusionTexture, vTexCoords).r;
-    color = mix(color, color * ao, uOcclusionStrength);
+  if (uViewNormalMap == 1) {
+    vec3 N = texture(uNormalMap, vTexCoords).rgb;
+    N = N * 2.0 - 1.0;
+    N = normalize(vTBN * N);
+    fColor = N;
   }
 
-  fColor = LINEARtoSRGB(color);
+  else {
+    vec3 N = normalize(vViewSpaceNormal);
+    vec3 V = normalize(-vViewSpacePosition);
+    vec3 L = uLightDirection;
+
+    N = texture(uNormalMap, vTexCoords).rgb;
+    N = N * 2.0 - 1.0;
+    N = normalize(vTBN * N);
+
+    ///////////
+
+    vec3 H = normalize(L + V);
+
+    vec4 baseColorFromTexture =
+        SRGBtoLINEAR(texture(uBaseColorTexture, vTexCoords));
+    vec4 metallicRougnessFromTexture =
+        texture(uMetallicRoughnessTexture, vTexCoords);
+
+    vec4 baseColor = uBaseColorFactor * baseColorFromTexture;
+    vec3 metallic = vec3(uMetallicFactor * metallicRougnessFromTexture.b);
+    float roughness = uRoughnessFactor * metallicRougnessFromTexture.g;
+
+    // https://github.com/KhronosGroup/glTF/blob/master/specification/2.0/README.md#pbrmetallicroughnessmetallicroughnesstexture
+    // "The metallic-roughness texture.The metalness values are sampled from the
+    // B channel.The roughness values are sampled from the G channel."
+
+    vec3 dielectricSpecular = vec3(0.04);
+    vec3 black = vec3(0.);
+
+    vec3 c_diff =
+        mix(baseColor.rgb * (1 - dielectricSpecular.r), black, metallic);
+    vec3 F_0 = mix(vec3(dielectricSpecular), baseColor.rgb, metallic);
+    float alpha = roughness * roughness;
+
+    float VdotH = clamp(dot(V, H), 0., 1.);
+    float baseShlickFactor = 1 - VdotH;
+    float shlickFactor = baseShlickFactor * baseShlickFactor; // power 2
+    shlickFactor *= shlickFactor;                             // power 4
+    shlickFactor *= baseShlickFactor;                         // power 5
+    vec3 F = F_0 + (vec3(1) - F_0) * shlickFactor;
+
+    float sqrAlpha = alpha * alpha;
+
+    float NdotL = clamp(dot(N, L), 0., 1.);
+    float NdotV = clamp(dot(N, V), 0., 1.);
+
+    float visDenominator =
+        NdotL * sqrt(NdotV * NdotV * (1 - sqrAlpha) + sqrAlpha) +
+        NdotV * sqrt(NdotL * NdotL * (1 - sqrAlpha) + sqrAlpha);
+    float Vis = visDenominator > 0. ? 0.5 / visDenominator : 0.0;
+
+    float NdotH = clamp(dot(N, H), 0., 1.);
+    float baseDenomD = (NdotH * NdotH * (sqrAlpha - 1.) + 1.);
+    float D = M_1_PI * sqrAlpha / (baseDenomD * baseDenomD);
+
+    vec3 f_specular = F * Vis * D;
+
+    vec3 diffuse = c_diff * M_1_PI;
+    vec3 f_diffuse = (1. - F) * diffuse;
+    vec3 emissive = SRGBtoLINEAR(texture2D(uEmissiveTexture, vTexCoords)).rgb *
+                    uEmissiveFactor;
+
+    vec3 color = (f_diffuse + f_specular) * uLightIntensity * NdotL;
+    color += emissive;
+
+    if (1 == uApplyOcclusion) {
+      float ao = texture2D(uOcclusionTexture, vTexCoords).r;
+      color = mix(color, color * ao, uOcclusionStrength);
+    }
+
+    fColor = LINEARtoSRGB(color);
+  }
 }

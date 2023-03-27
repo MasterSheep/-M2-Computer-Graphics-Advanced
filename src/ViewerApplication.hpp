@@ -66,7 +66,11 @@ private:
   bool loadGltfFile(tinygltf::Model & model);
   //////////////////////////////// Creation of Buffer Objects ///////////////////////////////
   std::vector<GLuint> createBufferObjects( const tinygltf::Model &model);
-  std::vector<GLuint> createVertexArrayObjects( const tinygltf::Model &model, const std::vector<GLuint> &bufferObjects, std::vector<VaoRange> & meshIndexToVaoRange);
+  std::vector<GLuint> createVertexArrayObjects( const tinygltf::Model & model, const std::vector<GLuint> & bufferObjects, const GLuint bufferTangentObject, std::vector<VaoRange> & meshIndexToVaoRange); 
 
   std::vector<GLuint> createTextureObjects(const tinygltf::Model &model) const;
+
+  glm::vec3 createTangentBitangent(const glm::vec3 * position, const glm::vec2 * texture);
+  GLuint createTangentBitangentArrays(const tinygltf::Model &model);
+  
 };
